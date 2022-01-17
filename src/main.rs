@@ -163,6 +163,7 @@ const DEAL_GOAL: u32 = 17;
 fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
     let mut player_hand = smallvec::SmallVec::<[Card; 5]>::new();
     let mut dealer_hand = smallvec::SmallVec::<[Card; 5]>::new();
+    let mut skip = false;
     if deck.len() < DECK.len() / 3 {
         deck.clear();
         deck.extend_from_slice(DECK);
@@ -182,8 +183,37 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
             calculate_hand_value(&dealer_hand)
         );
         println!("Blackjack: Player Win's");
+    } else {
+        println!(
+            "Player Hand: {} (Score {})",
+            PrintHand(&player_hand),
+            calculate_hand_value(&player_hand)
+        );
+        println!("Dealer's Hand: {}|**", dealer_hand[0]);
+        print!("(H)it, (S)tand, s(P)lit, (D)ouble> ");
+        io::stdout().flush().unwrap();
+        let mut buf = String::with_capacity(2);
+        io::stdin().read_line(&mut buf).unwrap();
+
+        match buf.as_bytes()[0] {
+            b'H' | b'h' => draw(deck, &mut player_hand, 1),
+            b'S' | b's' => skip = true,
+            b'P' | b'p' => {
+                eprintln!("Error: Split is not yet implemented");
+            }
+            b'D' | b'd' => {
+                draw(deck, &mut player_hand, 1);
+                skip = true;
+            }
+            i => {
+                eprintln!(
+                    "Error: unexpected input {}: Expected H, S, P, or D",
+                    i as char
+                );
+            }
+        }
     }
-    loop {
+    while !skip {
         println!(
             "Player Hand: {} (Score {})",
             PrintHand(&player_hand),
@@ -194,27 +224,16 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
         if calculate_hand_value(&player_hand) >= GOAL {
             break;
         }
-        print!("(H)it, (S)tand, s(P)lit, (D)ouble> ");
+        print!("(H)it, (S)tand> ");
         io::stdout().flush().unwrap();
         let mut buf = String::with_capacity(2);
         io::stdin().read_line(&mut buf).unwrap();
 
         match buf.as_bytes()[0] {
             b'H' | b'h' => draw(deck, &mut player_hand, 1),
-            b'S' | b's' => break,
-            b'P' | b'p' => {
-                eprintln!("Error: Split is not yet implemented");
-                continue;
-            }
-            b'D' | b'd' => {
-                draw(deck, &mut player_hand, 1);
-                break;
-            }
+            b'S' | b's' => skip = true,
             i => {
-                eprintln!(
-                    "Error: unexpected input {}: Expected H, S, P, or D",
-                    i as char
-                );
+                eprintln!("Error: unexpected input {}: Expected H or S", i as char);
                 continue;
             }
         }
