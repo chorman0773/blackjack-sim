@@ -57,6 +57,18 @@ impl Display for Card {
     }
 }
 
+fn is_equal(l: &Card, r: &Card) -> bool {
+    match (l.val, r.val) {
+        (
+            Value::King | Value::Queen | Value::Jack | Value::Number(10),
+            Value::King | Value::Queen | Value::Jack | Value::Number(10),
+        ) => true,
+        (Value::Ace, Value::Ace) => true,
+        (Value::Number(n), Value::Number(m)) => n == m,
+        _ => false,
+    }
+}
+
 fn calculate_hand_value(x: &[Card]) -> u32 {
     let mut ace_count = 0;
     let mut total = 0;
@@ -160,11 +172,13 @@ fn draw<V: Extend<Card>>(deck: &mut Vec<Card>, hand: &mut V, n: usize) {
 const GOAL: u32 = 21;
 const DEAL_GOAL: u32 = 17;
 
-fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
+fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R, win_count: &mut u32) {
     let mut player_hand = smallvec::SmallVec::<[Card; 5]>::new();
+    let mut player_hand2 = None;
     let mut dealer_hand = smallvec::SmallVec::<[Card; 5]>::new();
     let mut skip = false;
     if deck.len() < DECK.len() / 3 {
+        println!("Shuffled");
         deck.clear();
         deck.extend_from_slice(DECK);
         deck.shuffle(rng);
@@ -183,6 +197,7 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
             calculate_hand_value(&dealer_hand)
         );
         println!("Blackjack: Player Win's");
+        return;
     } else {
         println!(
             "Player Hand: {} (Score {})",
@@ -190,7 +205,12 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
             calculate_hand_value(&player_hand)
         );
         println!("Dealer's Hand: {}|**", dealer_hand[0]);
-        print!("(H)it, (S)tand, s(P)lit, (D)ouble> ");
+        if is_equal(&player_hand[0], &player_hand[1]) {
+            print!("(H)it, (S)tand, s(P)lit, (D)ouble> ");
+        } else {
+            print!("(H)it, (S)tand, (D)ouble> ");
+        }
+
         io::stdout().flush().unwrap();
         let mut buf = String::with_capacity(2);
         io::stdin().read_line(&mut buf).unwrap();
@@ -199,9 +219,18 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
             b'H' | b'h' => draw(deck, &mut player_hand, 1),
             b'S' | b's' => skip = true,
             b'P' | b'p' => {
-                eprintln!("Error: Split is not yet implemented");
+                if !is_equal(&player_hand[0], &player_hand[1]) {
+                    eprintln!("Cannot split {}", PrintHand(&player_hand));
+                    return;
+                }
+                let mut hand2 = smallvec::SmallVec::<[Card; 5]>::new();
+                hand2[0] = player_hand.pop().unwrap(); // Player has 2 cards in hand
+                draw(deck, &mut player_hand, 1);
+                draw(deck, &mut hand2, 1);
+                player_hand2 = Some(hand2);
             }
             b'D' | b'd' => {
+                println!("Doubled Down");
                 draw(deck, &mut player_hand, 1);
                 skip = true;
             }
@@ -219,6 +248,13 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
             PrintHand(&player_hand),
             calculate_hand_value(&player_hand)
         );
+        if let Some(hand2) = &player_hand2 {
+            println!(
+                "Split Player Hand: {} (Score {})",
+                PrintHand(hand2),
+                calculate_hand_value(&player_hand)
+            );
+        }
         println!("Dealer's Hand: {}|**", dealer_hand[0]);
 
         if calculate_hand_value(&player_hand) >= GOAL {
@@ -239,6 +275,41 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
         }
     }
 
+    if let Some(hand2) = &mut player_hand2 {
+        println!("Split Hand");
+        skip = false;
+        while !skip {
+            println!(
+                "Player Hand: {} (Score {})",
+                PrintHand(&player_hand),
+                calculate_hand_value(&player_hand)
+            );
+            println!(
+                "Split Player Hand: {} (Score {})",
+                PrintHand(hand2),
+                calculate_hand_value(&player_hand)
+            );
+            println!("Dealer's Hand: {}|**", dealer_hand[0]);
+
+            if calculate_hand_value(hand2) >= GOAL {
+                break;
+            }
+            print!("(H)it, (S)tand> ");
+            io::stdout().flush().unwrap();
+            let mut buf = String::with_capacity(2);
+            io::stdin().read_line(&mut buf).unwrap();
+
+            match buf.as_bytes()[0] {
+                b'H' | b'h' => draw(deck, hand2, 1),
+                b'S' | b's' => skip = true,
+                i => {
+                    eprintln!("Error: unexpected input {}: Expected H or S", i as char);
+                    continue;
+                }
+            }
+        }
+    }
+
     println!(
         "Player Hand: {} (Score {})",
         PrintHand(&player_hand),
@@ -250,10 +321,24 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
         calculate_hand_value(&dealer_hand)
     );
     let player_result = calculate_hand_value(&player_hand);
+    let mut hand1_bust = false;
     if player_result > GOAL {
         println!("Player Busts");
+        hand1_bust = true;
+    }
+
+    let split_result = player_hand2.as_deref().map(calculate_hand_value);
+
+    let mut hand2_bust = split_result.is_none();
+    if split_result.unwrap_or(0) > GOAL {
+        println!("Split Hand Busts");
+        hand2_bust = true;
+    }
+
+    if hand1_bust && hand2_bust {
         return;
     }
+
     while calculate_hand_value(&dealer_hand) < DEAL_GOAL {
         draw(deck, &mut dealer_hand, 1);
         println!(
@@ -264,23 +349,44 @@ fn one_round<R: Rng>(deck: &mut Vec<Card>, rng: &mut R) {
     }
     let dealer_result = calculate_hand_value(&dealer_hand);
     if dealer_result > GOAL {
+        *win_count += (1 - hand1_bust as u32) + (1 - (hand2_bust || split_result.is_none()) as u32);
         println!("Dealer Busts");
         return;
     }
+    if !hand1_bust {
+        match player_result.cmp(&dealer_result) {
+            Ordering::Less => println!("Hand 1: Dealer Wins"),
+            Ordering::Equal => println!("Hand 1: Tie"),
+            Ordering::Greater => {
+                *win_count += 1;
+                println!("Hand 1: Player wins")
+            }
+        }
+    }
 
-    match player_result.cmp(&dealer_result) {
-        Ordering::Less => println!("Dealer Wins"),
-        Ordering::Equal => println!("Tie"),
-        Ordering::Greater => println!("Player wins"),
+    if !hand2_bust {
+        let split_result = split_result.unwrap();
+        match split_result.cmp(&dealer_result) {
+            Ordering::Less => println!("Hand 2: Dealer Wins"),
+            Ordering::Equal => println!("Hand 2: Tie"),
+            Ordering::Greater => {
+                *win_count += 1;
+                println!("Hand 2: Player wins")
+            }
+        }
     }
 }
 
 fn main() {
     let mut rng = rand::thread_rng();
     let mut deck = Vec::from(DECK);
+    let mut win_count = 0;
+    let mut round_count = 0;
     deck.shuffle(&mut rng);
     loop {
-        one_round(&mut deck, &mut rng);
+        one_round(&mut deck, &mut rng, &mut win_count);
+        round_count += 1;
+        println!("Player wins {}. Rounds Played {}", win_count, round_count);
         println!("Press enter to continue>");
         io::stdin().read_line(&mut String::new()).unwrap();
     }
